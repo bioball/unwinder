@@ -38,6 +38,13 @@ function Machine() {
   this.tryStack = [];
   this.machineBreaks = [];
   this.machineWatches = [];
+  this._globals = {
+    'VM': this,
+    //'require',
+    '$Frame': Frame,
+    '$ContinuationExc': ContinuationExc
+  };
+  this.globals = {};
 }
 
 Machine.prototype.loadScript = function(path) {
@@ -55,6 +62,13 @@ Machine.prototype.loadModule = function(path) {
   var output = compiler(src, { includeDebug: true });
 
   // run...
+};
+
+/**
+ * Globals should be an object of string => value pairs
+ */
+Machine.prototype.setGlobals = function(globals) {
+  this.globals = globals;
 };
 
 Machine.prototype.loadString = function(str) {
@@ -109,41 +123,18 @@ Machine.prototype.execute = function(fn, thisPtr, args) {
 Machine.prototype.run = function() {
   var path = this.path;
   var code = this.code;
-
-  var module = {
-    exports: {}
-  };
-  var fn = new Function(
-    'VM',
-    //'require',
-    'module',
-    'exports',
-    '$Frame',
-    '$ContinuationExc',
-    'console',
-    code + '\nreturn $__global;'
-  );
-
-  var rootFn = fn(
-    this,
-    //require.bind(null, path),
-    module,
-    module.exports,
-    Frame,
-    ContinuationExc,
-    { log: function() {
-      var args = Array.prototype.slice.call(arguments);
-      this.output += args.join(' ') + '\n';
-    }.bind(this)}
-  );
-
-  this.output = '';
+  var globals = Object.assign({}, this._globals, this.globals);
+  var globalsKeys = Object.keys(globals);
+  var globalsValues = globalsKeys.map(function(key){ return globals[key]; });
+  var fnBody = code + '\nreturn $__global;';
+  var fnArgs = [null].concat(globalsKeys).concat([fnBody]);
+  var fn = new (Function.prototype.bind.apply(Function, fnArgs));
+  var rootFn = fn.apply(null, globalsValues);
   this.execute(rootFn);
   this.globalFn = rootFn;
 };
 
 Machine.prototype.abort = function() {
-  this.output = '';
   this.globalFn = null;
   this.state = IDLE;
   this.running = false;
@@ -527,10 +518,6 @@ Machine.prototype.setCode = function(path, code) {
 
 Machine.prototype.isStepping = function() {
   return this.stepping;
-};
-
-Machine.prototype.getOutput = function() {
-  return this.output;
 };
 
 Machine.prototype.getState = function() {
